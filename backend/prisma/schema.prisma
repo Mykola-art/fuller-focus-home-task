@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Job {
+  id            String                  @id @default(uuid())
+  status        JobStatus               @default(PENDING)
+  originalFile  String?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  totalRows     Int                     @default(0)
+  processedRows Int                     @default(0)
+  errorCount    Int                     @default(0)
+  records       LeadershipInputRecord[]
+}
+
+model LeadershipInputRecord {
+  id       String @id @default(uuid())
+  jobId    String
+  rowIndex Int
+
+  filerEin   String
+  orgName    String
+  websiteRaw String?
+  orgDomain  String?
+
+  employeeNameRaw  String
+  employeeTitleRaw String?
+  compOrg          String?
+
+  firstName  String?
+  middleName String?
+  lastName   String?
+  suffix     String?
+
+  inputIssues String[] @default([])
+  createdAt   DateTime @default(now())
+
+  job          Job                           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  verification LeadershipVerificationResult?
+
+  @@unique([jobId, rowIndex])
+  @@index([jobId])
+  @@index([filerEin])
+  @@index([orgDomain])
+}
+
+enum CacheProvider {
+  GOOGLE_CSE
+  EMAIL_FINDER
+  EMAIL_VERIFIER
+}
+
+model CacheResult {
+  id         String        @id @default(uuid())
+  provider   CacheProvider
+  cacheKey   String        @unique
+  request    Json
+  response   Json?
+  statusCode Int?
+  costUsd    Decimal       @default(0)
+  fetchedAt  DateTime      @default(now())
+  expiresAt  DateTime?
+
+  @@index([provider])
+  @@index([expiresAt])
+}
+
+enum VerifyMode {
+  OFFLINE
+  ONLINE
+}
+
+enum CurrentStatus {
+  STILL_EMPLOYED
+  LEFT_ORGANIZATION
+  UNKNOWN
+}
+
+enum EmailType {
+  WORK_VERIFIED
+  WORK_UNVERIFIED
+  PERSONAL
+  NOT_FOUND
+}
+
+enum ConfidenceLevel {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model LeadershipVerificationResult {
+  id       String @id @default(uuid())
+  recordId String @unique
+  jobId    String
+
+  mode          VerifyMode
+  currentStatus CurrentStatus
+  currentTitle  String?
+  evidenceDate  DateTime?
+  dataSources   Json?
+  notes         String?
+
+  verifiedEmail      String?
+  emailType          EmailType @default(NOT_FOUND)
+  emailChecks        Json?
+  emailSources       Json?
+  emailLastCheckedAt DateTime?
+  emailCostUsd       Decimal   @default(0)
+
+  confidenceLevel  ConfidenceLevel @default(LOW)
+  costPerRecordUsd Decimal         @default(0)
+
+  lastVerifiedAt DateTime @default(now())
+  costUsd        Decimal  @default(0)
+
+  record LeadershipInputRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([currentStatus])
+  @@index([mode])
+  @@index([confidenceLevel])
+}
