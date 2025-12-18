@@ -136,11 +136,6 @@ export default function App() {
         {job && <FiltersBar />}
 
         <ResultsTable rows={filtered} />
-
-        <div className="text-xs text-gray-500">
-          This UI fetches all results once (pageSize=200) and filters
-          client-side (perfect for the 100-row prototype).
-        </div>
       </main>
     </div>
   );

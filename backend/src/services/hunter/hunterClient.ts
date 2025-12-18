@@ -1,6 +1,8 @@
 import { CacheProvider } from "@prisma/client";
 import { config } from "../../config.js";
 import { buildCacheKey, getCache, setCache } from "../cache/cache.js";
+import { fetchWithRetry } from "../http/fetchWithRetry.js";
+import { limiters } from "../rateLimit/limiters.js";
 
 export type HunterFinderResponse = {
   data?: {
@@ -47,7 +49,15 @@ export async function hunterFindEmail(params: {
   url.searchParams.set("last_name", params.lastName);
   url.searchParams.set("api_key", config.HUNTER_API_KEY);
 
-  const res = await fetch(url.toString());
+  const res = await limiters.hunter.schedule(() =>
+    fetchWithRetry(url.toString(), { method: "GET" }),
+  );
+
+  if (res.status === 429) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Hunter 429: ${body}`);
+  }
+
   const json = (await res.json()) as HunterFinderResponse;
 
   const costUsd = config.HUNTER_COST_PER_LOOKUP_USD;

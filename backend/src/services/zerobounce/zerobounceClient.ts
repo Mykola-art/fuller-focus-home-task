@@ -1,6 +1,8 @@
 import { CacheProvider } from "@prisma/client";
 import { config } from "../../config.js";
 import { buildCacheKey, getCache, setCache } from "../cache/cache.js";
+import { fetchWithRetry } from "../http/fetchWithRetry.js";
+import { limiters } from "../rateLimit/limiters.js";
 
 export type ZeroBounceValidateResponse = {
   address?: string;
@@ -41,7 +43,15 @@ export async function zerobounceValidate(email: string) {
   url.searchParams.set("email", email);
   url.searchParams.set("ip_address", "");
 
-  const res = await fetch(url.toString());
+  const res = await limiters.zerobounce.schedule(() =>
+    fetchWithRetry(url.toString(), { method: "GET" }),
+  );
+
+  if (res.status === 429) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`ZeroBounce 429: ${body}`);
+  }
+
   const json = (await res.json()) as ZeroBounceValidateResponse;
 
   const costUsd = json?.error ? 0 : config.ZEROBOUNCE_COST_PER_VERIFY_USD;

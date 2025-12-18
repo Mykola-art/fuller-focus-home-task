@@ -1,47 +1,113 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, VerifyMode, CurrentStatus, JobStatus } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
+import { config } from "../../config.js";
+import { mapWithConcurrency } from "../utils/mapWithConcurrency.js";
 import { verifyRecord } from "./verifyRecord.js";
 import { scoreJob } from "../score/scoreJob.js";
 
 export async function verifyJob(jobId: string) {
+  await prisma.job.update({
+    where: { id: jobId },
+    data: { status: JobStatus.RUNNING, processedRows: 0, errorCount: 0 },
+  });
+
   const records = await prisma.leadershipInputRecord.findMany({
     where: { jobId },
     orderBy: { rowIndex: "asc" },
   });
+
   let totalCost = 0;
 
-  for (const rec of records) {
-    const v = await verifyRecord(rec);
-    totalCost += v.costUsd;
+  const fallbackMode: VerifyMode =
+    config.ENRICHMENT_MODE === "online"
+      ? VerifyMode.ONLINE
+      : VerifyMode.OFFLINE;
 
-    await prisma.leadershipVerificationResult.upsert({
-      where: { recordId: rec.id },
-      update: {
-        jobId,
-        mode: v.mode,
-        currentStatus: v.currentStatus,
-        currentTitle: v.currentTitle,
-        evidenceDate: v.evidenceDate,
-        dataSources: v.dataSources as Prisma.InputJsonValue,
-        notes: v.notes,
-        lastVerifiedAt: new Date(),
-        costUsd: new Prisma.Decimal(v.costUsd),
+  try {
+    await mapWithConcurrency(
+      records,
+      config.WORKER_CONCURRENCY,
+      async (rec) => {
+        try {
+          const v = await verifyRecord(rec);
+          totalCost += v.costUsd;
+
+          await prisma.leadershipVerificationResult.upsert({
+            where: { recordId: rec.id },
+            update: {
+              jobId,
+              mode: v.mode,
+              currentStatus: v.currentStatus,
+              currentTitle: v.currentTitle,
+              evidenceDate: v.evidenceDate,
+              dataSources: v.dataSources as Prisma.InputJsonValue,
+              notes: v.notes,
+              lastVerifiedAt: new Date(),
+              costUsd: new Prisma.Decimal(v.costUsd),
+            },
+            create: {
+              recordId: rec.id,
+              jobId,
+              mode: v.mode,
+              currentStatus: v.currentStatus,
+              currentTitle: v.currentTitle,
+              evidenceDate: v.evidenceDate,
+              dataSources: v.dataSources as Prisma.InputJsonValue,
+              notes: v.notes,
+              lastVerifiedAt: new Date(),
+              costUsd: new Prisma.Decimal(v.costUsd),
+            },
+          });
+        } catch (e: any) {
+          await prisma.job.update({
+            where: { id: jobId },
+            data: { errorCount: { increment: 1 } },
+          });
+
+          const msg = String(e?.message ?? e ?? "unknown error").slice(0, 500);
+
+          await prisma.leadershipVerificationResult.upsert({
+            where: { recordId: rec.id },
+            update: {
+              jobId,
+              mode: fallbackMode,
+              currentStatus: CurrentStatus.UNKNOWN,
+              notes: `verify_error: ${msg}`,
+              lastVerifiedAt: new Date(),
+              costUsd: new Prisma.Decimal(0),
+            },
+            create: {
+              recordId: rec.id,
+              jobId,
+              mode: fallbackMode,
+              currentStatus: CurrentStatus.UNKNOWN,
+              notes: `verify_error: ${msg}`,
+              lastVerifiedAt: new Date(),
+              costUsd: new Prisma.Decimal(0),
+            },
+          });
+        } finally {
+          await prisma.job.update({
+            where: { id: jobId },
+            data: { processedRows: { increment: 1 } },
+          });
+        }
       },
-      create: {
-        recordId: rec.id,
-        jobId,
-        mode: v.mode,
-        currentStatus: v.currentStatus,
-        currentTitle: v.currentTitle,
-        evidenceDate: v.evidenceDate,
-        dataSources: v.dataSources as Prisma.InputJsonValue,
-        notes: v.notes,
-        lastVerifiedAt: new Date(),
-        costUsd: new Prisma.Decimal(v.costUsd),
-      },
+    );
+
+    await scoreJob(jobId);
+
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { status: JobStatus.COMPLETED },
     });
-  }
 
-  await scoreJob(jobId);
-  return { recordCount: records.length, totalCostUsd: totalCost };
+    return { recordCount: records.length, totalCostUsd: totalCost };
+  } catch (e) {
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { status: JobStatus.FAILED },
+    });
+    throw e;
+  }
 }

@@ -18,6 +18,7 @@ const norm = (s: string) =>
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
 const hasLeaderKw = (t: string) =>
   /(chief executive|ceo|executive director|president\s*&\s*ceo|president and ceo)/i.test(
     t,
@@ -77,26 +78,56 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
   let costUsd = 0;
 
   const queries: { type: Source["type"]; q: string }[] = [];
-  if (rec.orgDomain)
+
+  if (rec.orgDomain) {
     queries.push({
       type: "org_site",
       q: `site:${rec.orgDomain} (CEO OR "Chief Executive" OR "Executive Director") "${rec.employeeNameRaw}"`,
     });
+  }
+
   queries.push({
     type: "web",
     q: `"${rec.orgName}" "${rec.employeeNameRaw}" (CEO OR "Chief Executive" OR "Executive Director")`,
   });
+
   queries.push({
     type: "web",
     q: `"${rec.orgName}" (CEO OR "Chief Executive" OR "Executive Director")`,
   });
 
+  // HARD CAP to avoid Google quota burn (free is 100/day) :contentReference[oaicite:4]{index=4}
+  const capped = queries.slice(
+    0,
+    Math.max(1, config.GOOGLE_CSE_MAX_QUERIES_PER_RECORD),
+  );
+
   const items: Array<{ item: any; type: Source["type"]; q: string }> = [];
 
-  for (const { type, q } of queries) {
-    const r = await googleCseSearch(q, 5);
-    costUsd += r.costUsd;
-    for (const it of r.response.items ?? []) items.push({ item: it, type, q });
+  try {
+    for (const { type, q } of capped) {
+      const r = await googleCseSearch(q, 5);
+      costUsd += r.costUsd;
+      for (const it of r.response.items ?? [])
+        items.push({ item: it, type, q });
+    }
+  } catch (e: any) {
+    // On 429 / rate issues, return UNKNOWN with note; don't crash job
+    sources.push({
+      type: capped[0]?.type ?? "web",
+      query: capped[0]?.q,
+      snippet: `lookup_error: ${String(e?.message ?? e ?? "unknown")}`,
+    });
+    return {
+      mode: VerifyMode.ONLINE,
+      currentStatus: CurrentStatus.UNKNOWN,
+      currentTitle: null,
+      evidenceDate: null,
+      dataSources: sources,
+      notes:
+        "External lookup failed (rate limit/quota). Try again later or reduce queries.",
+      costUsd,
+    };
   }
 
   for (const it of items) {
@@ -148,7 +179,7 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
     }
   }
 
-  for (const it of items.slice(0, 5))
+  for (const it of items.slice(0, 5)) {
     sources.push({
       type: it.type,
       query: it.q,
@@ -157,6 +188,7 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
       snippet: it.item.snippet,
       evidenceDate: extractEvidenceDate(it.item),
     });
+  }
 
   return {
     mode: VerifyMode.ONLINE,
