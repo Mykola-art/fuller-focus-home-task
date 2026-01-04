@@ -127,6 +127,8 @@ model LeadershipVerificationResult {
   lastVerifiedAt DateTime @default(now())
   costUsd        Decimal  @default(0)
 
+  unknownReason String?
+
   record LeadershipInputRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
 
   @@index([jobId])

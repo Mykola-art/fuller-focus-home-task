@@ -44,6 +44,7 @@ export async function verifyJob(jobId: string) {
               notes: v.notes,
               lastVerifiedAt: new Date(),
               costUsd: new Prisma.Decimal(v.costUsd),
+              unknownReason: v.unknownReason,
             },
             create: {
               recordId: rec.id,
@@ -56,6 +57,7 @@ export async function verifyJob(jobId: string) {
               notes: v.notes,
               lastVerifiedAt: new Date(),
               costUsd: new Prisma.Decimal(v.costUsd),
+              unknownReason: v.unknownReason,
             },
           });
         } catch (e: any) {
@@ -75,6 +77,7 @@ export async function verifyJob(jobId: string) {
               notes: `verify_error: ${msg}`,
               lastVerifiedAt: new Date(),
               costUsd: new Prisma.Decimal(0),
+              unknownReason: "rate_limited_or_quota",
             },
             create: {
               recordId: rec.id,
@@ -84,6 +87,7 @@ export async function verifyJob(jobId: string) {
               notes: `verify_error: ${msg}`,
               lastVerifiedAt: new Date(),
               costUsd: new Prisma.Decimal(0),
+              unknownReason: "rate_limited_or_quota",
             },
           });
         } finally {
@@ -92,7 +96,7 @@ export async function verifyJob(jobId: string) {
             data: { processedRows: { increment: 1 } },
           });
         }
-      },
+      }
     );
 
     await scoreJob(jobId);

@@ -2,6 +2,8 @@ import { CurrentStatus, VerifyMode } from "@prisma/client";
 import type { LeadershipInputRecord } from "@prisma/client";
 import { config } from "../../config.js";
 import { googleCseSearch } from "../../services/googleCse/googleCseClient.js";
+import { normalizeNameForSearch } from "../../utils/normalizePerson.js";
+import { normalizeTitle } from "../../utils/normalizeTitle.js";
 
 type Source = {
   type: "org_site" | "web" | "offline";
@@ -21,13 +23,15 @@ const norm = (s: string) =>
 
 const hasLeaderKw = (t: string) =>
   /(chief executive|ceo|executive director|president\s*&\s*ceo|president and ceo)/i.test(
-    t,
+    t
   );
 
-function nameMatches(text: string, rec: LeadershipInputRecord) {
+const hasFormerKw = (t: string) => /\bformer\b|\bretired\b|\bex-\b/i.test(t);
+
+function nameMatches(text: string, first?: string, last?: string) {
   const t = norm(text);
-  const fn = rec.firstName ? norm(rec.firstName) : "";
-  const ln = rec.lastName ? norm(rec.lastName) : "";
+  const fn = first ? norm(first) : "";
+  const ln = last ? norm(last) : "";
   return !!fn && !!ln && t.includes(fn) && t.includes(ln);
 }
 
@@ -43,19 +47,21 @@ function extractEvidenceDate(item: any): string | undefined {
 
 function extractTitle(snippet: string): string | null {
   const m = snippet.match(
-    /(President\s*(?:and|&)\s*CEO|Chief Executive Officer|Executive Director|CEO)/i,
+    /(President\s*(?:and|&)\s*CEO|Chief Executive Officer|Executive Director|CEO)/i
   );
   return m?.[1] ?? null;
 }
 
 function extractOtherCeo(snippet: string): string | null {
   const m = snippet.match(
-    /([A-Z][a-z]+\s+[A-Z][a-z]+)\s*,\s*(?:CEO|Chief Executive Officer|Executive Director)/,
+    /([A-Z][a-z]+\s+[A-Z][a-z]+)\s*,\s*(?:CEO|Chief Executive Officer|Executive Director)/
   );
   return m?.[1] ?? null;
 }
 
 export async function verifyRecord(rec: LeadershipInputRecord) {
+  //TODO: think more about offline mode and it's capabilities
+
   if (config.ENRICHMENT_MODE === "offline") {
     const sources: Source[] = [
       {
@@ -77,29 +83,37 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
   const sources: Source[] = [];
   let costUsd = 0;
 
+  // Normalize name for search + matching
+  const nm = normalizeNameForSearch(rec.employeeNameRaw);
+  const normalizedName = nm.normalized || rec.employeeNameRaw;
+
+  // Prefer existing parsed first/last, but fall back to normalized extraction
+  const first = rec.firstName ?? nm.first;
+  const last = rec.lastName ?? nm.last;
+
+  // Normalize title intent
+  const t = normalizeTitle(rec.employeeTitleRaw);
+
   const queries: { type: Source["type"]; q: string }[] = [];
+
+  const leaderTerms = `(CEO OR "Chief Executive" OR "Executive Director" OR "President and CEO")`;
 
   if (rec.orgDomain) {
     queries.push({
       type: "org_site",
-      q: `site:${rec.orgDomain} (CEO OR "Chief Executive" OR "Executive Director") "${rec.employeeNameRaw}"`,
+      q: `site:${rec.orgDomain} "${normalizedName}" ${leaderTerms}`,
     });
   }
 
   queries.push({
     type: "web",
-    q: `"${rec.orgName}" "${rec.employeeNameRaw}" (CEO OR "Chief Executive" OR "Executive Director")`,
-  });
-
-  queries.push({
-    type: "web",
-    q: `"${rec.orgName}" (CEO OR "Chief Executive" OR "Executive Director")`,
+    q: `"${rec.orgName}" "${normalizedName}" ${leaderTerms}`,
   });
 
   // HARD CAP to avoid Google quota burn (free is 100/day) :contentReference[oaicite:4]{index=4}
   const capped = queries.slice(
     0,
-    Math.max(1, config.GOOGLE_CSE_MAX_QUERIES_PER_RECORD),
+    Math.max(1, config.GOOGLE_CSE_MAX_QUERIES_PER_RECORD)
   );
 
   const items: Array<{ item: any; type: Source["type"]; q: string }> = [];
@@ -127,12 +141,64 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
       notes:
         "External lookup failed (rate limit/quota). Try again later or reduce queries.",
       costUsd,
+      unknownReason: "rate_limited_or_quota",
     };
   }
 
+  if (!items.length) {
+    return {
+      mode: VerifyMode.ONLINE,
+      currentStatus: CurrentStatus.UNKNOWN,
+      currentTitle: null,
+      evidenceDate: null,
+      dataSources: sources,
+      notes: "No search hits",
+      costUsd,
+      unknownReason: nm.normalized
+        ? "no_search_hits"
+        : "name_normalization_issue",
+    };
+  }
+
+  // A) If we see “Former” tied to THIS person + leadership keyword => lean LEFT
   for (const it of items) {
     const text = `${it.item.title ?? ""} ${it.item.snippet ?? ""}`;
-    if (it.type === "org_site" && nameMatches(text, rec) && hasLeaderKw(text)) {
+    if (
+      nameMatches(text, first, last) &&
+      hasLeaderKw(text) &&
+      hasFormerKw(text)
+    ) {
+      const d = extractEvidenceDate(it.item);
+      sources.push({
+        type: it.type,
+        query: it.q,
+        url: it.item.link,
+        title: it.item.title,
+        snippet: it.item.snippet,
+        evidenceDate: d,
+      });
+      return {
+        mode: VerifyMode.ONLINE,
+        currentStatus: CurrentStatus.LEFT_ORGANIZATION,
+        currentTitle: null,
+        evidenceDate: d ? new Date(d) : null,
+        dataSources: sources,
+        notes: `Matched "Former" leadership mention for this person`,
+        costUsd,
+        unknownReason: null,
+      };
+    }
+  }
+
+  // B) Strong org-site match => still employed, but avoid false positives when “former” appears
+  for (const it of items) {
+    const text = `${it.item.title ?? ""} ${it.item.snippet ?? ""}`;
+    if (
+      it.type === "org_site" &&
+      nameMatches(text, first, last) &&
+      hasLeaderKw(text) &&
+      !hasFormerKw(text)
+    ) {
       const d = extractEvidenceDate(it.item);
       sources.push({
         type: "org_site",
@@ -150,15 +216,17 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
         dataSources: sources,
         notes: "Matched org-site result",
         costUsd,
+        unknownReason: null,
       };
     }
   }
 
+  // C) Detect different CEO name
   for (const it of items) {
     const sn = it.item.snippet ?? "";
     if (!hasLeaderKw(sn)) continue;
     const other = extractOtherCeo(sn);
-    if (other && rec.lastName && !norm(other).includes(norm(rec.lastName))) {
+    if (other && last && !norm(other).includes(norm(last))) {
       sources.push({
         type: it.type,
         query: it.q,
@@ -175,10 +243,12 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
         dataSources: sources,
         notes: `Detected different CEO name: ${other}`,
         costUsd,
+        unknownReason: null,
       };
     }
   }
 
+  // D) Attach top evidence for debugging
   for (const it of items.slice(0, 5)) {
     sources.push({
       type: it.type,
@@ -190,6 +260,12 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
     });
   }
 
+  // Decide unknown reason
+  let unknownReason = "no_strong_match";
+  if (nm.notes.includes("name_too_short")) unknownReason = "name_too_short";
+  if (t.isFormer) unknownReason = "title_suggests_former_but_not_confirmed";
+  if (t.isActingOrInterim) unknownReason = "acting_or_interim_neutral";
+
   return {
     mode: VerifyMode.ONLINE,
     currentStatus: CurrentStatus.UNKNOWN,
@@ -198,5 +274,6 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
     dataSources: sources,
     notes: "No strong match",
     costUsd,
+    unknownReason,
   };
 }

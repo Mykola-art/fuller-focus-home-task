@@ -24,6 +24,7 @@ jobsRouter.post("/", upload.single("file"), async (req, res) => {
     data: { originalFile: req.file.originalname, status: "PENDING" },
   });
 
+  //TODO: review the logic of extracting the jobId with the same data file in order to actually use the cache results to reduce costs
   try {
     const ingest = await ingestLeadershipCsv({
       jobId: job.id,
