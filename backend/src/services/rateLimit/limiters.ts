@@ -11,4 +11,5 @@ export const limiters = {
     config.ZEROBOUNCE_CONCURRENCY,
     config.ZEROBOUNCE_MIN_TIME_MS,
   ),
+  pdl: new RateLimiter(config.PDL_CONCURRENCY, config.PDL_MIN_TIME_MS),
 };

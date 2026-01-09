@@ -16,6 +16,9 @@ const ConfigSchema = z.object({
   ZEROBOUNCE_API_KEY: z.string().optional().default(""),
   ZEROBOUNCE_COST_PER_VERIFY_USD: z.coerce.number().default(0.004),
 
+  PDL_API_KEY: z.string().optional().default(""),
+  PDL_COST_PER_ENRICHMENT_USD: z.coerce.number().default(0.05),
+
   // HTTP retry behavior
   HTTP_RETRIES: z.preprocess(
     (v) => (v === undefined || v === "" ? 3 : Number(v)),
@@ -65,6 +68,15 @@ const ConfigSchema = z.object({
   ),
   ZEROBOUNCE_MIN_TIME_MS: z.preprocess(
     (v) => (v === undefined || v === "" ? 150 : Number(v)),
+    z.number().int().finite(),
+  ),
+
+  PDL_CONCURRENCY: z.preprocess(
+    (v) => (v === undefined || v === "" ? 1 : Number(v)),
+    z.number().int().finite(),
+  ),
+  PDL_MIN_TIME_MS: z.preprocess(
+    (v) => (v === undefined || v === "" ? 200 : Number(v)),
     z.number().int().finite(),
   ),
 });

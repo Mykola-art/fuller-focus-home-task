@@ -61,6 +61,7 @@ enum CacheProvider {
   GOOGLE_CSE
   EMAIL_FINDER
   EMAIL_VERIFIER
+  PDL
 }
 
 model CacheResult {
@@ -128,6 +129,16 @@ model LeadershipVerificationResult {
   costUsd        Decimal  @default(0)
 
   unknownReason String?
+
+  pdlEmail           String?
+  pdlPhone           String?
+  pdlLinkedin        String?
+  pdlJobTitle        String?
+  pdlSeniority       String?
+  pdlOrganization    String?
+  pdlConfidenceScore Decimal?
+  pdlRawResponse     Json?
+  pdlEnrichedAt      DateTime?
 
   record LeadershipInputRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
 

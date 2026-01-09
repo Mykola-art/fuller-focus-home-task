@@ -7,6 +7,7 @@ import { prisma } from "../db/prisma.js";
 import { ingestLeadershipCsv } from "../workers/ingestLeadershipCsv.js";
 import { verifyJob } from "../workers/verify/verifyJob.js";
 import { enrichEmailsForJob } from "../workers/email/enrichEmailsForJob.js";
+import { enrichPdlForJob } from "../workers/pdl/enrichPdlForJob.js";
 
 export const jobsRouter = Router();
 const upload = multer({
@@ -105,6 +106,35 @@ jobsRouter.post("/:id/enrich-emails", async (req, res) => {
   return res.json({ ok: true, summary });
 });
 
+jobsRouter.post("/:id/enrich", async (req, res) => {
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) return res.status(400).json({ error: "Invalid job id" });
+
+  const job = await prisma.job.findUnique({ where: { id: id.data } });
+  if (!job) return res.status(404).json({ error: "Job not found" });
+
+  const bodySchema = z.object({
+    recordIds: z.array(z.string().uuid()).optional(),
+  });
+  const body = bodySchema.safeParse(req.body);
+  if (!body.success) {
+    return res.status(400).json({ error: "Invalid request body", details: body.error });
+  }
+
+  const recordIds = body.data.recordIds;
+
+  void enrichPdlForJob(id.data, recordIds).catch((error) => {
+    console.error(`PDL enrichment failed for job ${id.data}:`, error);
+  });
+
+  return res.json({
+    ok: true,
+    jobId: id.data,
+    message: "PDL enrichment started in background",
+    recordIds: recordIds?.length ?? "all",
+  });
+});
+
 jobsRouter.get("/:id/results", async (req, res) => {
   const id = z.string().uuid().safeParse(req.params.id);
   if (!id.success) return res.status(400).json({ error: "Invalid job id" });
@@ -156,6 +186,17 @@ jobsRouter.get("/:id/results", async (req, res) => {
       ? r.verification.lastVerifiedAt.toISOString()
       : "",
     cost_per_record: r.verification?.costPerRecordUsd?.toString?.() ?? "0",
+
+    pdl_email: r.verification?.pdlEmail ?? "",
+    pdl_phone: r.verification?.pdlPhone ?? "",
+    pdl_linkedin: r.verification?.pdlLinkedin ?? "",
+    pdl_job_title: r.verification?.pdlJobTitle ?? "",
+    pdl_seniority: r.verification?.pdlSeniority ?? "",
+    pdl_organization: r.verification?.pdlOrganization ?? "",
+    pdl_confidence_score: r.verification?.pdlConfidenceScore?.toString() ?? "",
+    pdl_enriched_at: r.verification?.pdlEnrichedAt
+      ? r.verification.pdlEnrichedAt.toISOString()
+      : "",
   }));
 
   return res.json({ page, pageSize, total, items: mapped });
@@ -204,6 +245,17 @@ jobsRouter.get("/:id/export", async (req, res) => {
       ? r.verification.lastVerifiedAt.toISOString()
       : "",
     cost_per_record: r.verification?.costPerRecordUsd?.toString?.() ?? "0",
+
+    pdl_email: r.verification?.pdlEmail ?? "",
+    pdl_phone: r.verification?.pdlPhone ?? "",
+    pdl_linkedin: r.verification?.pdlLinkedin ?? "",
+    pdl_job_title: r.verification?.pdlJobTitle ?? "",
+    pdl_seniority: r.verification?.pdlSeniority ?? "",
+    pdl_organization: r.verification?.pdlOrganization ?? "",
+    pdl_confidence_score: r.verification?.pdlConfidenceScore?.toString() ?? "",
+    pdl_enriched_at: r.verification?.pdlEnrichedAt
+      ? r.verification.pdlEnrichedAt.toISOString()
+      : "",
   }));
 
   const parser = new Parser({ withBOM: true });
