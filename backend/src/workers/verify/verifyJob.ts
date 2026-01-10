@@ -96,7 +96,7 @@ export async function verifyJob(jobId: string) {
             data: { processedRows: { increment: 1 } },
           });
         }
-      }
+      },
     );
 
     await scoreJob(jobId);

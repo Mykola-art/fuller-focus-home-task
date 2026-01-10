@@ -48,7 +48,10 @@ export async function enrichPdlForJob(
       const enrichment = await enrichPdlRecord(rec);
       totalCost += enrichment.pdlCostUsd;
 
-      if (!enrichment.pdlRawResponse || (enrichment.pdlRawResponse as any).error) {
+      if (
+        !enrichment.pdlRawResponse ||
+        (enrichment.pdlRawResponse as any).error
+      ) {
         errors += 1;
         return;
       }
@@ -121,13 +124,17 @@ export async function enrichPdlForJob(
       }
 
       if (enrichment.pdlConfidenceScore !== null) {
-        updateData.pdlConfidenceScore = new Prisma.Decimal(enrichment.pdlConfidenceScore);
+        updateData.pdlConfidenceScore = new Prisma.Decimal(
+          enrichment.pdlConfidenceScore,
+        );
       }
 
       const createData = {
         recordId: rec.id,
         jobId,
-        mode: (config.ENRICHMENT_MODE === "online" ? "ONLINE" : "OFFLINE") as VerifyMode,
+        mode: (config.ENRICHMENT_MODE === "online"
+          ? "ONLINE"
+          : "OFFLINE") as VerifyMode,
         currentStatus: "UNKNOWN" as CurrentStatus,
         pdlRawResponse: enrichment.pdlRawResponse as Prisma.InputJsonValue,
         pdlEnrichedAt: new Date(),
@@ -137,9 +144,10 @@ export async function enrichPdlForJob(
         pdlJobTitle: enrichment.pdlJobTitle ?? null,
         pdlSeniority: enrichment.pdlSeniority ?? null,
         pdlOrganization: enrichment.pdlOrganization ?? null,
-        pdlConfidenceScore: enrichment.pdlConfidenceScore !== null
-          ? new Prisma.Decimal(enrichment.pdlConfidenceScore)
-          : null,
+        pdlConfidenceScore:
+          enrichment.pdlConfidenceScore !== null
+            ? new Prisma.Decimal(enrichment.pdlConfidenceScore)
+            : null,
       };
 
       await prisma.leadershipVerificationResult.upsert({
@@ -148,7 +156,11 @@ export async function enrichPdlForJob(
         create: createData,
       });
 
-      if (enrichment.pdlEmail || enrichment.pdlPhone || enrichment.pdlLinkedin) {
+      if (
+        enrichment.pdlEmail ||
+        enrichment.pdlPhone ||
+        enrichment.pdlLinkedin
+      ) {
         enrichedCount += 1;
       }
     } catch (error) {

@@ -53,7 +53,7 @@ export function normalizeNameForSearch(raw: string): {
   // drop middle initials
   const before3 = tokens.length;
   tokens = tokens.filter(
-    (t, idx) => idx === 0 || idx === tokens.length - 1 || !isInitial(t)
+    (t, idx) => idx === 0 || idx === tokens.length - 1 || !isInitial(t),
   );
   if (tokens.length !== before3) notes.push("dropped_initial");
 

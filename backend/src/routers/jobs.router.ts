@@ -5,6 +5,7 @@ import { Parser } from "@json2csv/plainjs";
 
 import { prisma } from "../db/prisma.js";
 import { ingestLeadershipCsv } from "../workers/ingestLeadershipCsv.js";
+import { ingestLeadershipJson } from "../workers/ingestLeadershipJson.js";
 import { verifyJob } from "../workers/verify/verifyJob.js";
 import { enrichEmailsForJob } from "../workers/email/enrichEmailsForJob.js";
 import { enrichPdlForJob } from "../workers/pdl/enrichPdlForJob.js";
@@ -51,6 +52,90 @@ jobsRouter.post("/", upload.single("file"), async (req, res) => {
     return res
       .status(500)
       .json({ error: "Ingestion failed", details: e?.message ?? String(e) });
+  }
+});
+
+jobsRouter.post("/json", upload.single("file"), async (req, res) => {
+  let jsonData: unknown[];
+  let originalFileName: string;
+
+  if (req.file) {
+    originalFileName = req.file.originalname;
+    try {
+      const fileContent = req.file.buffer.toString("utf-8");
+      const parsed = JSON.parse(fileContent);
+      if (!Array.isArray(parsed)) {
+        return res.status(400).json({
+          error: "JSON file must contain an array",
+        });
+      }
+      jsonData = parsed;
+    } catch (e: any) {
+      return res.status(400).json({
+        error: "Invalid JSON file",
+        details: e?.message ?? String(e),
+      });
+    }
+  } else {
+    const contentType = req.headers["content-type"] || "";
+    if (!contentType.includes("application/json")) {
+      return res.status(400).json({
+        error:
+          "Content-Type must be application/json when sending JSON in request body",
+      });
+    }
+
+    if (!req.body) {
+      return res.status(400).json({
+        error: "Missing JSON data in request body",
+      });
+    }
+
+    if (!Array.isArray(req.body)) {
+      return res.status(400).json({
+        error: "Request body must be a JSON array",
+      });
+    }
+
+    jsonData = req.body;
+    originalFileName = "json-body-upload";
+  }
+
+  const job = await prisma.job.create({
+    data: {
+      originalFile: originalFileName,
+      status: "PENDING",
+    },
+  });
+
+  try {
+    const ingest = await ingestLeadershipJson({
+      jobId: job.id,
+      jsonData,
+    });
+
+    const updated = await prisma.job.update({
+      where: { id: job.id },
+      data: {
+        status: "COMPLETED",
+        totalRows: ingest.totalRows,
+        processedRows: ingest.totalRows,
+        errorCount: ingest.errorCount,
+      },
+    });
+
+    return res.status(201).json({ job: updated, ingest });
+  } catch (e: any) {
+    await prisma.job.update({
+      where: { id: job.id },
+      data: { status: "FAILED" },
+    });
+    return res
+      .status(500)
+      .json({
+        error: "JSON ingestion failed",
+        details: e?.message ?? String(e),
+      });
   }
 });
 
@@ -118,21 +203,39 @@ jobsRouter.post("/:id/enrich", async (req, res) => {
   });
   const body = bodySchema.safeParse(req.body);
   if (!body.success) {
-    return res.status(400).json({ error: "Invalid request body", details: body.error });
+    return res
+      .status(400)
+      .json({ error: "Invalid request body", details: body.error });
   }
 
   const recordIds = body.data.recordIds;
 
-  void enrichPdlForJob(id.data, recordIds).catch((error) => {
-    console.error(`PDL enrichment failed for job ${id.data}:`, error);
-  });
+  // Background logic (commented for testing):
+  // void enrichPdlForJob(id.data, recordIds).catch((error) => {
+  //   console.error(`PDL enrichment failed for job ${id.data}:`, error);
+  // });
+  // return res.json({
+  //   ok: true,
+  //   jobId: id.data,
+  //   message: "PDL enrichment started in background",
+  //   recordIds: recordIds?.length ?? "all",
+  // });
 
-  return res.json({
-    ok: true,
-    jobId: id.data,
-    message: "PDL enrichment started in background",
-    recordIds: recordIds?.length ?? "all",
-  });
+  try {
+    const summary = await enrichPdlForJob(id.data, recordIds);
+
+    return res.json({
+      ok: true,
+      jobId: id.data,
+      summary,
+      recordIds: recordIds?.length ?? "all",
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: "PDL enrichment failed",
+      details: error?.message ?? String(error),
+    });
+  }
 });
 
 jobsRouter.get("/:id/results", async (req, res) => {
@@ -194,9 +297,7 @@ jobsRouter.get("/:id/results", async (req, res) => {
     pdl_seniority: r.verification?.pdlSeniority ?? "",
     pdl_organization: r.verification?.pdlOrganization ?? "",
     pdl_confidence_score: r.verification?.pdlConfidenceScore?.toString() ?? "",
-    pdl_enriched_at: r.verification?.pdlEnrichedAt
-      ? r.verification.pdlEnrichedAt.toISOString()
-      : "",
+    pdl_enriched_at: r.verification?.pdlEnrichedAt?.toISOString() || null,
   }));
 
   return res.json({ page, pageSize, total, items: mapped });

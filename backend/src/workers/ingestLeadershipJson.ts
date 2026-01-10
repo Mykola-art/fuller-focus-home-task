@@ -1,4 +1,3 @@
-import { parse } from "csv-parse/sync";
 import { z } from "zod";
 import { prisma } from "../db/prisma.js";
 import { normalizeWebsiteToDomain } from "./normalizers/normalizeWebsiteToDomain.js";
@@ -13,23 +12,29 @@ const InputRowSchema = z.object({
   comp_org: z.string().optional().nullable(),
 });
 
-export async function ingestLeadershipCsv(params: {
+export async function ingestLeadershipJson(params: {
   jobId: string;
-  csvBuffer: Buffer;
+  jsonData: unknown[];
 }) {
-  const rows: Record<string, string>[] = parse(params.csvBuffer, {
-    columns: true,
-    skip_empty_lines: true,
-    bom: true,
-    trim: true,
-  });
-  if (!rows.length) throw new Error("CSV has no data rows");
+  if (!Array.isArray(params.jsonData)) {
+    throw new Error("JSON data must be an array");
+  }
 
-  const required = Object.keys(InputRowSchema.shape);
-  const actual = Object.keys(rows[0] ?? {});
-  const missing = required.filter((h) => !actual.includes(h));
-  if (missing.length)
-    throw new Error(`CSV missing required columns: ${missing.join(", ")}`);
+  if (!params.jsonData.length) {
+    throw new Error("JSON array has no data rows");
+  }
+
+  const requiredFields = ["filer_ein", "org_name", "employee_name"];
+  const firstRow = params.jsonData[0] as Record<string, unknown> | null;
+  if (!firstRow) {
+    throw new Error("JSON array is empty");
+  }
+
+  const actual = Object.keys(firstRow);
+  const missing = requiredFields.filter((h) => !actual.includes(h));
+  if (missing.length) {
+    throw new Error(`JSON missing required fields: ${missing.join(", ")}`);
+  }
 
   let errorCount = 0;
 
@@ -39,18 +44,23 @@ export async function ingestLeadershipCsv(params: {
       data: { status: "RUNNING" },
     });
 
-    for (let i = 0; i < rows.length; i++) {
-      const parsed = InputRowSchema.safeParse(rows[i]);
+    for (let i = 0; i < params.jsonData.length; i++) {
+      const row = params.jsonData[i];
+      const parsed = InputRowSchema.safeParse(row);
       const issues: string[] = [];
+
       if (!parsed.success) {
         errorCount++;
         issues.push("row_schema_invalid");
       }
-      const r: any = parsed.success ? parsed.data : rows[i];
+
+      const r: any = parsed.success ? parsed.data : row;
 
       const einRaw = String(r.filer_ein ?? "").trim();
       const einDigits = einRaw.replace(/\D/g, "");
-      if (einDigits.length !== 9) issues.push("ein_not_9_digits");
+      if (einDigits.length !== 9) {
+        issues.push("ein_not_9_digits");
+      }
 
       const websiteRaw = r.website ? String(r.website).trim() : "";
       const normalizedWebsite =
@@ -58,22 +68,39 @@ export async function ingestLeadershipCsv(params: {
           ? ""
           : websiteRaw;
       const domain = normalizeWebsiteToDomain(normalizedWebsite);
-      if (!normalizedWebsite) issues.push("missing_website");
-      if (normalizedWebsite && !domain) issues.push("website_unparseable");
+      if (!normalizedWebsite) {
+        issues.push("missing_website");
+      }
+      if (normalizedWebsite && !domain) {
+        issues.push("website_unparseable");
+      }
 
       const nameRaw = String(r.employee_name ?? "").trim();
-      const name = parsePersonName(nameRaw);
-      if (name?.issues?.length) issues.push(...name.issues);
+      if (!nameRaw) {
+        issues.push("missing_employee_name");
+        errorCount++;
+      }
+
+      const name = nameRaw ? parsePersonName(nameRaw) : null;
+      if (name?.issues?.length) {
+        issues.push(...name.issues);
+      }
+
+      const orgName = String(r.org_name ?? "").trim();
+      if (!orgName) {
+        issues.push("missing_org_name");
+        errorCount++;
+      }
 
       await tx.leadershipInputRecord.create({
         data: {
           jobId: params.jobId,
           rowIndex: i + 1,
           filerEin: einDigits || einRaw,
-          orgName: String(r.org_name ?? "").trim(),
+          orgName: orgName || "Unknown",
           websiteRaw: normalizedWebsite || null,
           orgDomain: domain || null,
-          employeeNameRaw: nameRaw,
+          employeeNameRaw: nameRaw || "Unknown",
           employeeTitleRaw: r.employee_title
             ? String(r.employee_title).trim()
             : null,
@@ -89,9 +116,13 @@ export async function ingestLeadershipCsv(params: {
 
     await tx.job.update({
       where: { id: params.jobId },
-      data: { totalRows: rows.length, processedRows: rows.length, errorCount },
+      data: {
+        totalRows: params.jsonData.length,
+        processedRows: params.jsonData.length,
+        errorCount,
+      },
     });
   });
 
-  return { totalRows: rows.length, errorCount };
+  return { totalRows: params.jsonData.length, errorCount };
 }

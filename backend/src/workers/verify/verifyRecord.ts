@@ -23,7 +23,7 @@ const norm = (s: string) =>
 
 const hasLeaderKw = (t: string) =>
   /(chief executive|ceo|executive director|president\s*&\s*ceo|president and ceo)/i.test(
-    t
+    t,
   );
 
 const hasFormerKw = (t: string) => /\bformer\b|\bretired\b|\bex-\b/i.test(t);
@@ -47,14 +47,14 @@ function extractEvidenceDate(item: any): string | undefined {
 
 function extractTitle(snippet: string): string | null {
   const m = snippet.match(
-    /(President\s*(?:and|&)\s*CEO|Chief Executive Officer|Executive Director|CEO)/i
+    /(President\s*(?:and|&)\s*CEO|Chief Executive Officer|Executive Director|CEO)/i,
   );
   return m?.[1] ?? null;
 }
 
 function extractOtherCeo(snippet: string): string | null {
   const m = snippet.match(
-    /([A-Z][a-z]+\s+[A-Z][a-z]+)\s*,\s*(?:CEO|Chief Executive Officer|Executive Director)/
+    /([A-Z][a-z]+\s+[A-Z][a-z]+)\s*,\s*(?:CEO|Chief Executive Officer|Executive Director)/,
   );
   return m?.[1] ?? null;
 }
@@ -113,7 +113,7 @@ export async function verifyRecord(rec: LeadershipInputRecord) {
   // HARD CAP to avoid Google quota burn (free is 100/day) :contentReference[oaicite:4]{index=4}
   const capped = queries.slice(
     0,
-    Math.max(1, config.GOOGLE_CSE_MAX_QUERIES_PER_RECORD)
+    Math.max(1, config.GOOGLE_CSE_MAX_QUERIES_PER_RECORD),
   );
 
   const items: Array<{ item: any; type: Source["type"]; q: string }> = [];
