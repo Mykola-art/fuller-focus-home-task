@@ -27,7 +27,11 @@ function shouldUpdateField(
 }
 
 function hasEnrichmentData(enrichment: EnrichmentResult): boolean {
-  return !!(enrichment.pdlEmail || enrichment.pdlPhone || enrichment.pdlLinkedin);
+  return !!(
+    enrichment.pdlEmail ||
+    enrichment.pdlPhone ||
+    enrichment.pdlLinkedin
+  );
 }
 
 function isErrorResponse(rawResponse: any): boolean {
@@ -61,15 +65,21 @@ function buildUpdateData(
 
   for (const { key, value } of fields) {
     const shouldUpdate =
-      shouldUpdateField(existing?.[key], value, existingConfidence, newConfidence) ||
-      !existing?.[key];
+      shouldUpdateField(
+        existing?.[key],
+        value,
+        existingConfidence,
+        newConfidence,
+      ) || !existing?.[key];
     if (shouldUpdate) {
       updateData[key] = value;
     }
   }
 
   if (enrichment.pdlConfidenceScore !== null) {
-    updateData.pdlConfidenceScore = new Prisma.Decimal(enrichment.pdlConfidenceScore);
+    updateData.pdlConfidenceScore = new Prisma.Decimal(
+      enrichment.pdlConfidenceScore,
+    );
   }
 
   return updateData;
@@ -83,7 +93,9 @@ function buildCreateData(
   return {
     recordId,
     jobId,
-    mode: (config.ENRICHMENT_MODE === "online" ? "ONLINE" : "OFFLINE") as VerifyMode,
+    mode: (config.ENRICHMENT_MODE === "online"
+      ? "ONLINE"
+      : "OFFLINE") as VerifyMode,
     currentStatus: "UNKNOWN" as CurrentStatus,
     pdlRawResponse: enrichment.pdlRawResponse as Prisma.InputJsonValue,
     pdlEnrichedAt: new Date(),

@@ -133,7 +133,7 @@ export async function pdlEnrichPerson(params: PDLEnrichmentParams): Promise<{
         },
       },
       costUsd: 0,
-      cached: true,
+      cached: false,
       statusCode: 404,
     };
   }

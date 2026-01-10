@@ -130,12 +130,10 @@ jobsRouter.post("/json", upload.single("file"), async (req, res) => {
       where: { id: job.id },
       data: { status: "FAILED" },
     });
-    return res
-      .status(500)
-      .json({
-        error: "JSON ingestion failed",
-        details: e?.message ?? String(e),
-      });
+    return res.status(500).json({
+      error: "JSON ingestion failed",
+      details: e?.message ?? String(e),
+    });
   }
 });
 

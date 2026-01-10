@@ -210,8 +210,10 @@ export async function enrichPdlRecord(
   try {
     const result = await pdlEnrichPerson({
       profile: linkedInProfile,
-      firstName: normalizedFirst,
-      lastName: normalizedLast,
+      firstName: normalizedFirst.toLowerCase(),
+      lastName: normalizedLast.toLowerCase(),
+      companyDomain: rec?.orgDomain?.toLowerCase() || "",
+      companyName: rec?.orgName?.toLowerCase() || "",
     });
 
     const enrichmentData = extractEnrichmentData(result.response);
